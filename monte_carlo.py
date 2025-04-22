@@ -2,13 +2,10 @@ import numpy as np
 from preprocess import preprocess_support_set
 
 class evaluations():
-    def __init__(self, y_val, jacobian, density, exponent, local_sum, inner_exponent, g_val):
+    def __init__(self, y_val, jacobian, density, g_val):
         self.y_val = y_val
         self.jacobian = jacobian
         self.density = density
-        self.exponent = exponent
-        self.local_sum = local_sum
-        self.inner_exponent = inner_exponent
         self.g_val = g_val
 
     def __lt__(self, other):
@@ -30,7 +27,12 @@ class evaluations():
         return self.y_val >= other.y_val
 
     def __str__(self):
-        return f"""Evaluated Value: {self.y_val}\n                   Density:         {self.density}\n                   Exponent:        {self.exponent}\n                   Local Sum:       {self.local_sum}\n                   New Exponent:    {np.exp(-(self.y_val**2))}\n                   Inner Exponent:  {self.inner_exponent}\n                   g_val:           {self.g_val}"""
+        return f"""Value of Polynomial System at sampled point: {self.y_val}\n                  
+                  Density:         {self.density}\n                   
+                  Jacobian Determinant:        { abs(np.linalg.det(self.jacobian)) }\n                  
+                 g_val:           {self.g_val}"""
+
+
 
 # -----------------------------------------------------------------------------
 # Numerical utility helpers
@@ -102,21 +104,17 @@ def sample_random_matrix(C, delta):
     return X
 
 # -----------------------------------------------------------------------------
-# Core Monte‑Carlo helpers – **modified compute_g uses taylor_exp**
+# Core Monte‑Carlo helpers 
 # -----------------------------------------------------------------------------
 
-def compute_g(Xmat, A, x):
-    """Compute the vector g(x) with a stable exponential implementation."""
-    n = Xmat.shape[0]
-    t_plus_1 = Xmat.shape[1]
-    g_val = np.zeros(n)
-    for i in range(n):
-        for j in range(1, t_plus_1):
-            exponent = float(np.dot(A[j], x))
-            exp_val = taylor_exp(exponent)  # *** numerically stable exp ***
-            g_val[i] -= Xmat[i, j] * exp_val
-    return g_val
-
+def compute_polynomial(A, C, x):
+    total = 0.0
+    for p in range(C.shape[0]):
+        inner_sum = 0.0
+        for i in range(A.shape[0]):
+            inner_sum += C[p][i] *  np.dot(A[i], x)
+        total += inner_sum * inner_sum
+    return total
 
 def compute_jacobian(Xmat, A, x):
     n = Xmat.shape[0]
@@ -130,35 +128,41 @@ def compute_jacobian(Xmat, A, x):
             J[i, :] += -Xmat[i, j] * exp_val * A[j]
     return J
 
-# -----------------------------------------------------------------------------
-# Statistical densities & polynomial evaluation (unchanged)
-# -----------------------------------------------------------------------------
 
-def density_v_of_g(g_val, C0, delta, sigma_scale=1000.0):
+def compute_g(Xmat, A, x):
+    n = Xmat.shape[0]
+    t_plus_1 = Xmat.shape[1]
+    g_val = np.zeros(n)
+    for i in range(n):
+        g_val[i] = 0.0
+        for j in range(1, t_plus_1):
+            exponent = float(np.dot(A[j], x))
+            exp_val = taylor_exp(exponent)
+            g_val[i] += Xmat[i, j] * exp_val 
+    return g_val
+
+
+
+
+def density_v_of_g(g_val, C0, delta):
     g_val = np.asarray(g_val)
     C0 = np.asarray(C0)
-    log_density = 0.0
+    density = 1.00
     for i in range(len(g_val)):
         mu = C0[i]
-        sigma = delta * abs(mu) * sigma_scale if abs(mu) >= 1e-14 else delta * 1e-6 * sigma_scale
-        log_coeff = -np.log(np.sqrt(2 * np.pi) * sigma)
-        log_exponent = -0.5 * (((g_val[i] - mu) / sigma) ** 2)
-        log_density += log_coeff + log_exponent
-    density = np.exp(log_density)
-    return density, log_density, 0.0
+        tentative =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
+        if tentative > 10: 
+            density = density * 2**(-10)
+        elif tentative > 0.5:
+            density = density * np.exp(-tentative)
+        else:
+            density = density * (1-tentative + tentative**2/2)
+    return density
 
 
-def compute_polynomial(A, C, x):
-    total = 0.0
-    for p in range(C.shape[0]):
-        inner_sum = 0.0
-        for i in range(A.shape[0]):
-            inner_sum += C[p][i] * x[0] ** A[i][0] * x[1] ** A[i][1]
-        total += inner_sum * inner_sum
-    return total
 
 # -----------------------------------------------------------------------------
-# Main Monte Carlo routine (unchanged except it now picks up new compute_g)
+# Main Monte Carlo routine 
 # -----------------------------------------------------------------------------
 
 def monte_carlo_kac_rice(A, C, delta, n_samples=50, M=30, seed=None, domain=None):
@@ -193,12 +197,12 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=50, M=30, seed=None, domain=None
                     g_val = compute_g(Xmat, A, x)
                     J = compute_jacobian(Xmat, A, x)
                     detJ = abs(np.linalg.det(J))
-                    density_val, log_exponent, inner_exponent = density_v_of_g(g_val, c0, delta)
+                    density_val = density_v_of_g(g_val, c0, delta)
                     local_sum += detJ * density_val
 
                     # Diagnostics: track polynomial values
                     y = compute_polynomial(A, C, x)
-                    poly_val = evaluations(y, J, density_val, log_exponent, local_sum, inner_exponent, g_val)
+                    poly_val = evaluations(y, J, density_val, g_val)
                     if len(min_poly_values) < 10:
                         min_poly_values.append(poly_val)
                     else:
@@ -219,7 +223,7 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=50, M=30, seed=None, domain=None
     return Z0_final
 
 # -----------------------------------------------------------------------------
-# Wrapper with preprocessing (unchanged)
+# Wrapper with preprocessing 
 # -----------------------------------------------------------------------------
 
 def run_monte_carlo_with_preprocessing(A, C, delta, n_samples=50, M=30, seed=None, domain=None):
@@ -249,9 +253,9 @@ if __name__ == "__main__":
             [1.0, -1.0, s, -t, -1, 1],
         ]
     )
-    delta = 0.3
+    delta = 0.003
     domain = (np.array([0.1, 0.1]), np.array([1.0, 1.0]))
 
     for i in range(5):
-        est = monte_carlo_kac_rice(A, C, delta, n_samples=1000, M=5, domain=None)
+        est = monte_carlo_kac_rice(A, C, delta, n_samples=6000, M=5, domain=None)
         print(f"Run {i + 1}: Monte Carlo Kac‑Rice estimate = {est}")
