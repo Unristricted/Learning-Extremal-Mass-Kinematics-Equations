@@ -142,7 +142,7 @@ def density_v_of_g(g_val, C0, delta, sigma_scale=1000.0):
         mu = C0[i]
         sigma = delta * abs(mu) * sigma_scale if abs(mu) >= 1e-14 else delta * 1e-6 * sigma_scale
         log_coeff = -np.log(np.sqrt(2 * np.pi) * sigma)
-        log_exponent = -0.5 * (((g_val[i] - mu) / sigma) ** 2)
+        log_exponent = - ((g_val[i] - mu)**2 / 2*(sigma)**2)
         log_density += log_coeff + log_exponent
     density = np.exp(log_density)
     return density, log_density, 0.0
@@ -249,7 +249,7 @@ if __name__ == "__main__":
             [1.0, -1.0, s, -t, -1, 1],
         ]
     )
-    delta = 0.3
+    delta = 0.0003
     domain = (np.array([0.1, 0.1]), np.array([1.0, 1.0]))
 
     for i in range(5):
