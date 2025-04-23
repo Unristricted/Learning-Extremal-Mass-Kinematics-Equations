@@ -15,9 +15,11 @@ def preprocess_support_set(A):
          pivot = A[i]
          active_constraints = []
          selected_normals = []
-         tolerance = 1e-10  # Adjust tolerance if needed
+         tolerance = 2**(-12)  # Adjust tolerance if needed
          for j, equation in enumerate(hull.equations):
             if abs(np.dot(equation[:-1], pivot) + equation[-1]) < tolerance:
+                print(f' {equation}')
+                print(f'{pivot}')
                 active_constraints.append(equation[:-1])    
          
          dimconstraint = np.linalg.matrix_rank(active_constraints)   

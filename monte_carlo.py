@@ -1,5 +1,6 @@
 import numpy as np
-from preprocess import preprocess_support_set
+from scipy.special import expm1
+# from preprocess import preprocess_support_set
 
 class evaluations():
     def __init__(self, y_val, jacobian, density, g_val):
@@ -35,46 +36,9 @@ class evaluations():
 
 
 # -----------------------------------------------------------------------------
-# Numerical utility helpers
-# -----------------------------------------------------------------------------
-
-def taylor_exp(x: float, tol: float = 1e-12, max_terms: int = 50) -> float:
-    """Compute e**x using a truncated Taylor series to improve stability.
-
-    Parameters
-    ----------
-    x : float
-        Exponent argument.
-    tol : float, optional
-        Absolute tolerance for early‑stopping the series. Defaults to 1e‑12.
-    max_terms : int, optional
-        Maximum number of summation terms. Defaults to 50.
-
-    Notes
-    -----
-    *   For moderately large |x|, the direct call ``np.exp`` can overflow/underflow.
-    *   This implementation accumulates terms until the incremental contribution is
-        smaller than *tol* **or** *max_terms* is reached.
-    *   When |x| is very large (|x| > 50), numerical issues are unavoidable; in such
-        cases we fall back to ``np.exp`` so behaviour is explicit.
-    """
-    if abs(x) > 50:
-        # We are outside the region where a truncated series is numerically useful.
-        return float(np.exp(x))
-
-    term = 1.0  # first term (x^0 / 0!)
-    result = 1.0
-    n = 1
-    while n < max_terms:
-        term *= x / n
-        result += term
-        if abs(term) < tol:
-            break
-        n += 1
-    return result
 
 # -----------------------------------------------------------------------------
-# Geometry helpers (unchanged)
+# Sampling Functions
 # -----------------------------------------------------------------------------
 
 def project_onto_plane(vec, normal):
@@ -104,7 +68,7 @@ def sample_random_matrix(C, delta):
     return X
 
 # -----------------------------------------------------------------------------
-# Core Monte‑Carlo helpers 
+#   Monte‑Carlo  and Polynomial Evaluation Helper Functions 
 # -----------------------------------------------------------------------------
 
 def compute_polynomial(A, C, x):
@@ -124,7 +88,11 @@ def compute_jacobian(Xmat, A, x):
     for i in range(n):
         for j in range(1, t_plus_1):
             exponent = float(np.dot(A[j], x))
-            exp_val = taylor_exp(exponent)
+            if exponent**2 > 1:
+                exp_val = expm1(exponent) + 1.0
+            else:
+                t = exponent
+                exp_val = 1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320
             J[i, :] += -Xmat[i, j] * exp_val * A[j]
     return J
 
@@ -137,7 +105,11 @@ def compute_g(Xmat, A, x):
         g_val[i] = 0.0
         for j in range(1, t_plus_1):
             exponent = float(np.dot(A[j], x))
-            exp_val = taylor_exp(exponent)
+            if exponent**2 > 1:
+                exp_val = expm1(exponent) + 1.0
+            else:
+                t = exponent
+                exp_val = 1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320
             g_val[i] += Xmat[i, j] * exp_val 
     return g_val
 
@@ -150,13 +122,13 @@ def density_v_of_g(g_val, C0, delta):
     density = 1.00
     for i in range(len(g_val)):
         mu = C0[i]
-        tentative =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
-        if tentative > 10: 
-            density = density * 2**(-10)
-        elif tentative > 0.5:
-            density = density * np.exp(-tentative)
+        t =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
+        if t > 9:
+            density = density * 2**(-11)
+        elif t > 1:    
+            density = density * (expm1(-t) + 1.0)
         else:
-            density = density * (1-tentative + tentative**2/2)
+            density = density * (1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320)
     return density
 
 
@@ -225,11 +197,10 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=50, M=30, seed=None, domain=None
 # -----------------------------------------------------------------------------
 # Wrapper with preprocessing 
 # -----------------------------------------------------------------------------
-
-def run_monte_carlo_with_preprocessing(A, C, delta, n_samples=50, M=30, seed=None, domain=None):
-    A_tilde, U, v = preprocess_support_set(A)
-    estimate = monte_carlo_kac_rice(A_tilde, C, delta, n_samples, M, seed, domain)
-    return estimate, A_tilde, U, v
+# def run_monte_carlo_with_preprocessing(A, C, delta, n_samples=50, M=30, seed=None, domain=None):
+#   A_tilde, U, v = preprocess_support_set(A)
+#    estimate = monte_carlo_kac_rice(A_tilde, C, delta, n_samples, M, seed, domain)
+#    return estimate, A_tilde, U, v
 
 # -----------------------------------------------------------------------------
 # Script entry‑point example
@@ -253,9 +224,9 @@ if __name__ == "__main__":
             [1.0, -1.0, s, -t, -1, 1],
         ]
     )
-    delta = 0.003
+    delta = 0.001
     domain = (np.array([0.1, 0.1]), np.array([1.0, 1.0]))
 
     for i in range(5):
-        est = monte_carlo_kac_rice(A, C, delta, n_samples=6000, M=5, domain=None)
+        est = monte_carlo_kac_rice(A, C, delta, n_samples=3000, M=5, domain=None)
         print(f"Run {i + 1}: Monte Carlo Kac‑Rice estimate = {est}")
