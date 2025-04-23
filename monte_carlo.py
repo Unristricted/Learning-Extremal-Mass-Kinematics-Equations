@@ -114,8 +114,6 @@ def compute_g(Xmat, A, x):
     return g_val
 
 
-
-
 def density_v_of_g(g_val, C0, delta):
     g_val = np.asarray(g_val)
     C0 = np.asarray(C0)
@@ -123,9 +121,12 @@ def density_v_of_g(g_val, C0, delta):
     for i in range(len(g_val)):
         mu = C0[i]
         t =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
-        if t > 9:
-            density = density * 2**(-11)
-        elif t > 1:    
+        if t > 10000:
+            density =  delta**2
+        elif t > 1000:
+            t = t * delta
+            density = density * (expm1(-t) + 1.0) + delta**2         
+        elif t > 10:    
             density = density * (expm1(-t) + 1.0)
         else:
             density = density * (1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320)
@@ -227,6 +228,10 @@ if __name__ == "__main__":
     delta = 0.001
     domain = (np.array([0.1, 0.1]), np.array([1.0, 1.0]))
 
+    final_estimate = 0.0
     for i in range(5):
-        est = monte_carlo_kac_rice(A, C, delta, n_samples=3000, M=5, domain=None)
-        print(f"Run {i + 1}: Monte Carlo Kac‑Rice estimate = {est}")
+        est = monte_carlo_kac_rice(A, C, delta, n_samples=5000, M=5, domain=None)
+        final_estimate =  (  i / (i+1)) * final_estimate +  (1/ (i+1)) * est
+        print(f"My current estimate is {final_estimate}")
+
+ 
