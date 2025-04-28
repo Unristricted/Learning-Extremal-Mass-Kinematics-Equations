@@ -120,12 +120,11 @@ def density_v_of_g(g_val, C0, delta):
     density = 1.00
     for i in range(len(g_val)):
         mu = C0[i]
-        t =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
+        t =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2  
         if t > delta**(-2):
-            t = t * delta
-            density = density * (expm1(-t) + 1.0) + delta**2         
+            density= delta
         elif t > delta**(-1):    
-            density = density * (expm1(-t) + 1.0) + delta**2 
+            density = density * (expm1(-t) + 1.0) + delta
         else:
             density = density * (1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320)
     return density
@@ -223,9 +222,10 @@ if __name__ == "__main__":
             [1.0, -1.0, s, -t, -1, 1],
         ]
     )
-    delta = 0.001
-    domain = (np.array([0.1, 0.1]), np.array([1.0, 1.0]))
 
+
+    delta = 0.0003
+ 
     final_estimate = 0.0
     for i in range(10):
         est = monte_carlo_kac_rice(A, C, delta, n_samples=5000, M=5, domain=None)
