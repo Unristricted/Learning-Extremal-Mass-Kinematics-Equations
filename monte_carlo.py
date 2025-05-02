@@ -1,6 +1,6 @@
 import numpy as np
-from scipy.special import expm1
-# from preprocess import preprocess_support_set
+from scipy.spatial import ConvexHull
+from preprocess import preprocess_support_set
 
 class evaluations():
     def __init__(self, y_val, jacobian, density, g_val):
@@ -118,15 +118,13 @@ def density_v_of_g(g_val, C0, delta):
     g_val = np.asarray(g_val)
     C0 = np.asarray(C0)
     density = 1.00
+    density_exp = []
     for i in range(len(g_val)):
         mu = C0[i]
-        t =  0.5 * (  (g_val[i]/mu - 1) / delta  )**2  
-        if t > delta**(-2):
-            density= delta
-        elif t > delta**(-1):    
-            density = density * (expm1(-t) + 1.0) + delta
-        else:
-            density = density * (1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320)
+        density_exp[i] =  - 0.5 * (  (g_val[i]/mu - 1) / delta  )**2  
+        c = np.min(density_exp)
+        log_density = -c + np.log(np.sum(np.exp(density_exp + c)))
+        density = np.exp(log_density)
     return density
 
 
@@ -135,70 +133,50 @@ def density_v_of_g(g_val, C0, delta):
 # Main Monte Carlo routine 
 # -----------------------------------------------------------------------------
 
-def monte_carlo_kac_rice(A, C, delta, n_samples=50, M=30, seed=None, domain=None):
-    if seed is not None:
-        np.random.seed(seed)
-
-    t_plus_1 = A.shape[0]
-    t = t_plus_1 - 1
-    n = C.shape[0]
-    dim = A.shape[1]
+def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
+    B = preprocess_support_set(A)
+    hull = ConvexHull(B)
     c0 = C[:, 0]
-    Z0 = 0.0
-
-    # Store the 10 smallest polynomial evaluations for debugging
+    Z_0 = 0.000
+    
+    # Store the 5 smallest polynomial evaluations for debugging
     min_poly_values = []
-    indices = list(range(t_plus_1))
-
-    for i in indices:
-        for j in indices:
-            if j == i:
+    for i in hull.vertices:
+        for j in hull.vertices:
+            if i == j:
                 continue
-            for _ in range(n_samples):
-                if domain is not None:
-                    lower, upper = domain
-                    x = np.random.uniform(lower, upper, size=dim)
+            if np.linalg.norm(A[i] - A[j]) < 1e-14:
+                continue
+            else:         
+                for t in range(n_samples):
+                    x = sample_x_ij(B[i], B[j], t, dim)
+                    Z_0 = 0.000
+                    local_sum = 0.0
+                    for m in range(M):
+                            Xmat = sample_random_matrix(C, delta)
+                            g_val = compute_g(Xmat, B, x)
+                            J = compute_jacobian(Xmat, B, x)
+                            detJ = abs(np.linalg.det(J))
+                            density_val = density_v_of_g(g_val, c0, delta)
+                            local_sum =  (m/(m+1))* local_sum +  (1/(m+1)) * detJ * density_val
+                    Z_0 = (t/(t+1))*Z_0 + (1/(t+1))* local_sum                
+    
+                # Diagnostics: track polynomial values
+                y = compute_polynomial(B, C, x)
+                poly_val = evaluations(y, J, density_val, g_val)
+                if len(min_poly_values) < 5:
+                    min_poly_values.append(poly_val)
                 else:
-                    x = sample_x_ij(A[i], A[j], t, dim)
-
-                local_sum = 0.0
-                for _m in range(M):
-                    Xmat = sample_random_matrix(C, delta)
-                    g_val = compute_g(Xmat, A, x)
-                    J = compute_jacobian(Xmat, A, x)
-                    detJ = abs(np.linalg.det(J))
-                    density_val = density_v_of_g(g_val, c0, delta)
-                    local_sum += detJ * density_val
-
-                    # Diagnostics: track polynomial values
-                    y = compute_polynomial(A, C, x)
-                    poly_val = evaluations(y, J, density_val, g_val)
-                    if len(min_poly_values) < 10:
-                        min_poly_values.append(poly_val)
-                    else:
-                        current_max = max(min_poly_values)
-                        if poly_val < current_max:
-                            max_idx = min_poly_values.index(current_max)
-                            min_poly_values[max_idx] = poly_val
-
-                Z0 += local_sum / M / n_samples
-
-    num_pairs = t_plus_1 * (t_plus_1 - 1)
-    Z0_final = (2.0 / (t * (t + 1))) * Z0 if t >= 1 else (2.0 / num_pairs) * Z0
-
-    print("10 least values of compute_polynomial:")
-    for ev in sorted(min_poly_values):
-        print(ev)
-
-    return Z0_final
-
-# -----------------------------------------------------------------------------
-# Wrapper with preprocessing 
-# -----------------------------------------------------------------------------
-# def run_monte_carlo_with_preprocessing(A, C, delta, n_samples=50, M=30, seed=None, domain=None):
-#   A_tilde, U, v = preprocess_support_set(A)
-#    estimate = monte_carlo_kac_rice(A_tilde, C, delta, n_samples, M, seed, domain)
-#    return estimate, A_tilde, U, v
+                    current_max = max(min_poly_values)
+                    if poly_val < current_max:
+                        max_idx = min_poly_values.index(current_max)
+                        min_poly_values[max_idx] = poly_val   
+                
+                print("10 least values of compute_polynomial:")
+                for ev in sorted(min_poly_values):
+                    print(ev)
+    
+    return Z_0
 
 # -----------------------------------------------------------------------------
 # Script entry‑point example
@@ -224,11 +202,11 @@ if __name__ == "__main__":
     )
 
 
-    delta = 0.0003
+    delta = 0.0001
  
     final_estimate = 0.0
     for i in range(10):
-        est = monte_carlo_kac_rice(A, C, delta, n_samples=5000, M=5, domain=None)
+        est = monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100)
         final_estimate =  (  i / (i+1)) * final_estimate +  (1/ (i+1)) * est
         print(f"My current estimate is {final_estimate}")
 
