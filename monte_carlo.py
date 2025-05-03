@@ -1,4 +1,6 @@
 import numpy as np
+from scipy.special import logsumexp
+from scipy.special import expm1
 from scipy.spatial import ConvexHull
 from preprocess import preprocess_support_set
 
@@ -48,7 +50,7 @@ def project_onto_plane(vec, normal):
     return vec - (np.dot(vec, normal) / denom) * normal
 
 
-def sample_x_ij(a_i, a_j, t, n):
+def sample_x_ij(a_i, a_j, n):
     normal = a_i - a_j
     norm_sq = np.dot(normal, normal)
     if norm_sq < 1e-14:
@@ -79,6 +81,9 @@ def compute_polynomial(A, C, x):
             inner_sum += C[p][i] *  np.dot(A[i], x)
         total += inner_sum * inner_sum
     return total
+
+
+#We should replace all exmp1 with log-exp-sum trick. Just tried now to fix it.
 
 def compute_jacobian(Xmat, A, x):
     n = Xmat.shape[0]
@@ -118,13 +123,16 @@ def density_v_of_g(g_val, C0, delta):
     g_val = np.asarray(g_val)
     C0 = np.asarray(C0)
     density = 1.00
-    density_exp = []
+    density_exp = np.arange(len(g_val))
     for i in range(len(g_val)):
         mu = C0[i]
-        density_exp[i] =  - 0.5 * (  (g_val[i]/mu - 1) / delta  )**2  
-        c = np.min(density_exp)
-        log_density = -c + np.log(np.sum(np.exp(density_exp + c)))
-        density = np.exp(log_density)
+        t = - 0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
+        if t < -1e-14:
+            density_exp[i] = min(np.log(0.0001), t* (delta**3))
+        else:
+            density_exp[i] = t
+    log_density = logsumexp(density_exp)
+    density = np.exp(log_density)
     return density
 
 
@@ -136,6 +144,9 @@ def density_v_of_g(g_val, C0, delta):
 def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
     B = preprocess_support_set(A)
     hull = ConvexHull(B)
+    hull_points = B[hull.vertices]
+    affine_basis = hull_points - hull_points[0]
+    dim = np.linalg.matrix_rank(affine_basis)
     c0 = C[:, 0]
     Z_0 = 0.000
     
@@ -149,7 +160,7 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
                 continue
             else:         
                 for t in range(n_samples):
-                    x = sample_x_ij(B[i], B[j], t, dim)
+                    x = sample_x_ij(B[i], B[j], dim)
                     Z_0 = 0.000
                     local_sum = 0.0
                     for m in range(M):
@@ -172,7 +183,7 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
                         max_idx = min_poly_values.index(current_max)
                         min_poly_values[max_idx] = poly_val   
                 
-                print("10 least values of compute_polynomial:")
+                print("5 least values of compute_polynomial:")
                 for ev in sorted(min_poly_values):
                     print(ev)
     
