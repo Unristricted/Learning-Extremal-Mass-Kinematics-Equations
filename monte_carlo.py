@@ -50,7 +50,7 @@ def project_onto_plane(vec, normal):
     return vec - (np.dot(vec, normal) / denom) * normal
 
 
-def sample_x_ij(a_i, a_j, n):
+def sample_x_ij(a_i, a_j, t, n):
     normal = a_i - a_j
     norm_sq = np.dot(normal, normal)
     if norm_sq < 1e-14:
@@ -127,8 +127,10 @@ def density_v_of_g(g_val, C0, delta):
     for i in range(len(g_val)):
         mu = C0[i]
         t = - 0.5 * (  (g_val[i]/mu - 1) / delta  )**2 
-        if t < -1e-14:
-            density_exp[i] = min(np.log(0.0001), t* (delta**3))
+        if t < -10**4:
+            density_exp[i] = -10**4
+        elif t < -10**2:     
+            density_exp[i] = min(-10**2, -(-t)**(1/3))
         else:
             density_exp[i] = t
     log_density = logsumexp(density_exp)
@@ -159,8 +161,10 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
             if np.linalg.norm(A[i] - A[j]) < 1e-14:
                 continue
             else:         
-                for t in range(n_samples):
-                    x = sample_x_ij(B[i], B[j], dim)
+                for h in range(n_samples):
+                    l =0
+                    k = 0
+                    x = sample_x_ij(B[i], B[j], len(hull_points), dim)
                     Z_0 = 0.000
                     local_sum = 0.0
                     for m in range(M):
@@ -169,8 +173,17 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
                             J = compute_jacobian(Xmat, B, x)
                             detJ = abs(np.linalg.det(J))
                             density_val = density_v_of_g(g_val, c0, delta)
-                            local_sum =  (m/(m+1))* local_sum +  (1/(m+1)) * detJ * density_val
-                    Z_0 = (t/(t+1))*Z_0 + (1/(t+1))* local_sum                
+                            if density_val < 10**-12:
+                                continue
+                            else: 
+                                k +=1 
+                                local_sum =  (k/(k+1))* local_sum +  (1/(k+1)) * detJ * density_val
+                    if local_sum < 10**-10:
+                        continue
+                    else:
+                        l +=1
+                        Z_0 = (l/(l+1))*Z_0 + (1/(l+1))* local_sum 
+                        print(f"Z_0 update: {Z_0}")               
     
                 # Diagnostics: track polynomial values
                 y = compute_polynomial(B, C, x)
@@ -183,42 +196,9 @@ def monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100, seed=None):
                         max_idx = min_poly_values.index(current_max)
                         min_poly_values[max_idx] = poly_val   
                 
-                print("5 least values of compute_polynomial:")
-                for ev in sorted(min_poly_values):
-                    print(ev)
+                #print("5 least values of compute_polynomial:")
+                #for ev in sorted(min_poly_values):
+                #    print(ev)
     
     return Z_0
 
-# -----------------------------------------------------------------------------
-# Script entry‑point example
-# -----------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    d = 3
-    A = np.array([
-        [2 * d, 0],
-        [0, 2 * d],
-        [0, d],
-        [d, 0],
-        [0, 1],
-        [1, 0],
-    ], dtype=float)
-
-    s = t = 44 / 31
-    C = np.array(
-        [
-            [1.0, 1.0, s, t, -1, -1],
-            [1.0, -1.0, s, -t, -1, 1],
-        ]
-    )
-
-
-    delta = 0.0001
- 
-    final_estimate = 0.0
-    for i in range(10):
-        est = monte_carlo_kac_rice(A, C, delta, n_samples=100, M=100)
-        final_estimate =  (  i / (i+1)) * final_estimate +  (1/ (i+1)) * est
-        print(f"My current estimate is {final_estimate}")
-
- 
