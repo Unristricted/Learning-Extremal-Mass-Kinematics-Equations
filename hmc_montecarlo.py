@@ -1,6 +1,6 @@
 import numpy as np
 from preprocess import preprocess_support_set
-from scipy.special import logsumexp
+from jax.scipy.special import logsumexp
 from scipy.special import expm1
 from scipy.spatial import ConvexHull
 import jax
@@ -134,19 +134,13 @@ def compute_g(Xmat, A, x):
 
 
 def density_v_of_g(g_val, C0, delta):
-    #g_val = np.asarray(g_val)
-    C0 = np.asarray(C0)
-    density = 1.00
-    density_exp = np.arange(len(g_val))
-    for i in range(len(g_val)):
-        mu = C0[i]
-        t = - 0.5 * (  (g_val[i]/mu - 1) / delta  )**2
-        if t < -1e-14:
-            density_exp[i] = min(np.log(0.0001), t* (delta**3))
-        else:
-            density_exp[i] = t
+    mu = C0
+    t = -0.5 * ((g_val / mu - 1) / delta) ** 2
+
+    density_exp = jnp.where(t < -1e-14, jnp.minimum(jnp.log(0.0001), t * delta**3), t)
+
     log_density = logsumexp(density_exp)
-    density = np.exp(log_density)
+    density = jnp.exp(log_density)
     return density
 
 
@@ -227,6 +221,18 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
     #Add options for other params at later stage if user wants to use them
     rng_key = hmc_params['rng_key']
 
+    def inference_loop(rng_key, kernel, initial_state, num_samples):
+        @jax.jit
+        def one_step(state, rng_key):
+            state, _ = kernel(rng_key, state)
+            return state, state
+
+        keys = jax.random.split(rng_key, num_samples)
+        _, states = jax.lax.scan(one_step, initial_state, keys)
+
+        return states
+
+
     for i in hull.vertices:
         for j in hull.vertices:
             if i == j:
@@ -241,14 +247,15 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
                     rng_key, warmup_key, sample_key = jax.random.split(rng_key, 3)
                     (state, parameters), _ = warmup.run(warmup_key, initial_position, num_steps=1000)
                     kernel = blackjax.nuts(log_density_fn, **parameters).step
-                    states = blackjax.inference_loop(sample_key, kernel, state, 1_000)
+                    states = inference_loop(sample_key, kernel, state, 1_000)
                     inverse_mass = parameters['inverse_mass_matrix']
                     step_size = parameters['step_size']
 
                     #HMC sampling
                     nuts = blackjax.nuts(log_density_fn, step_size, inverse_mass)
 
-                    n_steps = nuts.num_integration_steps
+                    #Figuring out a way to calculate this
+                    n_steps = 10#nuts.num_integration_steps
 
                     sample_hmc = blackjax.hmc(log_density_fn, step_size, inverse_mass, n_steps)
                     state = states[-1]
