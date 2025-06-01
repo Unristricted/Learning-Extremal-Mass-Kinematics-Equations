@@ -221,6 +221,7 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
     #Add options for other params at later stage if user wants to use them
     rng_key = hmc_params['rng_key']
 
+    #TODO: Need to rewrite this
     def inference_loop(rng_key, kernel, initial_state, num_samples):
         @jax.jit
         def one_step(state, rng_key):
@@ -243,18 +244,23 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
                 for t in range(n_samples):
                     #burn in for inverse mass matrix
                     initial_position = sample_x_ij(B[0], B[1], B.shape[1])
+                    #burn in to calculate inverse mass matrix and step size
                     warmup = blackjax.window_adaptation(blackjax.nuts, log_density_fn)
                     rng_key, warmup_key, sample_key = jax.random.split(rng_key, 3)
                     (state, parameters), _ = warmup.run(warmup_key, initial_position, num_steps=1000)
+
+                    #kernel includes inverse mass matrix and step size
                     kernel = blackjax.nuts(log_density_fn, **parameters).step
+
+                    #TODO: need to implement actual monte carlo logic here - the rest doesnt matter
                     states = inference_loop(sample_key, kernel, state, 1_000)
                     inverse_mass = parameters['inverse_mass_matrix']
                     step_size = parameters['step_size']
 
                     #HMC sampling
                     nuts = blackjax.nuts(log_density_fn, step_size, inverse_mass)
-
-                    #Figuring out a way to calculate this
+                    initial_state = nuts.init(initial_position)
+                    #Figuring out a way to calculate this - so number of integration steps is calculated at runtime
                     n_steps = 10#nuts.num_integration_steps
 
                     sample_hmc = blackjax.hmc(log_density_fn, step_size, inverse_mass, n_steps)
