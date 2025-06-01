@@ -201,93 +201,189 @@ def preprocess_routine(A):
 
     return B, hull, dim
 
-def hmc_monte_carlo_kac_rice(A, C, delta,
-                              n_samples=100,
-                              M=30,
-                              hmc_params=None):
+# def hmc_monte_carlo_kac_rice(A, C, delta,
+#                               n_samples=100,
+#                               M=30,
+#                               hmc_params=None):
 
+#     Xmat = sample_random_matrix(C, delta)
+
+#     B, hull, dim = preprocess_routine(A)
+
+#     def log_density_fn(x):
+#         x = jnp.asarray(x, dtype=jnp.float32)
+#         g = compute_g(Xmat, B, x)
+#         return -1*density_v_of_g(g, C[:, 0], delta)
+
+#     if hmc_params is None:
+#         raise ValueError("hmc_params must be provided for HMC sampling")
+
+#     #Add options for other params at later stage if user wants to use them
+#     rng_key = hmc_params['rng_key']
+
+#     #TODO: Need to rewrite this
+#     def inference_loop(rng_key, kernel, initial_state, num_samples):
+#         @jax.jit
+#         def one_step(state, rng_key):
+#             state, _ = kernel(rng_key, state)
+#             return state, state
+
+#         keys = jax.random.split(rng_key, num_samples)
+#         _, states = jax.lax.scan(one_step, initial_state, keys)
+
+#         return states
+
+
+#     for i in hull.vertices:
+#         for j in hull.vertices:
+#             if i == j:
+#                 continue
+#             if np.linalg.norm(A[i] - A[j]) < 1e-14:
+#                 continue
+#             else:
+#                 for t in range(n_samples):
+#                     #burn in for inverse mass matrix
+#                     initial_position = sample_x_ij(B[0], B[1], B.shape[1])
+#                     #burn in to calculate inverse mass matrix and step size
+#                     warmup = blackjax.window_adaptation(blackjax.nuts, log_density_fn)
+#                     rng_key, warmup_key, sample_key = jax.random.split(rng_key, 3)
+#                     (state, parameters), _ = warmup.run(warmup_key, initial_position, num_steps=1000)
+
+#                     #kernel includes inverse mass matrix and step size
+#                     kernel = blackjax.nuts(log_density_fn, **parameters).step
+
+#                     #TODO: need to implement actual monte carlo logic here - the rest doesnt matter
+#                     states = inference_loop(sample_key, kernel, state, 1_000)
+#                     inverse_mass = parameters['inverse_mass_matrix']
+#                     step_size = parameters['step_size']
+
+#                     #HMC sampling
+#                     nuts = blackjax.nuts(log_density_fn, step_size, inverse_mass)
+#                     initial_state = nuts.init(initial_position)
+#                     #Figuring out a way to calculate this - so number of integration steps is calculated at runtime
+#                     n_steps = 10#nuts.num_integration_steps
+
+#                     sample_hmc = blackjax.hmc(log_density_fn, step_size, inverse_mass, n_steps)
+#                     state = states[-1]
+#                     hmc_step = jax.jit(sample_hmc.step)
+
+#                     def one_hmc(state, k):
+#                         state, _ = hmc_step(k, state)
+#                         return state, np.array(state.position)
+
+#                     keys = jax.random.split(rng_key, n_samples)
+#                     _, chain = jax.lax.scan(one_hmc, state, keys)
+
+#                     # Kac-Rice estimate over HMC chain
+#                     c0 = C[:, 0]
+#                     Z = 0.0
+
+#                     for x in chain:
+#                         local = 0.0
+#                         for _ in range(M):
+#                             g_val = compute_g(Xmat, A, x)
+#                             J = compute_jacobian(Xmat, A, x)
+#                             local += abs(np.linalg.det(J)) * density_v_of_g(g_val, c0, delta)
+#                         Z += local / M
+
+#                     return Z
+
+def hmc_monte_carlo_kac_rice(A, C, delta,
+                             n_samples=100,
+                             M=30,
+                             hmc_params=None):
+    """
+    HMC-based Monte Carlo Kac-Rice estimator.
+
+    For each distinct pair of convex-hull vertices (i, j):
+      1) Warm up NUTS to get `step_size` and `inverse_mass_matrix`.
+      2) Run one HMC chain of length `n_samples`, collecting positions.
+      3) For each sampled x in that chain, do an inner Monte Carlo of size M to estimate
+         |det J(x)| * density(g(x))/M.
+      4) Average over the M inner draws → Z_ij_sample(x). Sum over all n_samples → Z_ij.
+      5) Return the average of Z_ij over all valid (i, j) pairs.
+    """
+
+    # 1) Draw a single random Xmat (shared across all (i,j))
     Xmat = sample_random_matrix(C, delta)
 
+    # 2) Precompute convex-hull support set and dimension
     B, hull, dim = preprocess_routine(A)
+    hull_vertices = hull.vertices
+    c0 = C[:, 0]
 
-    def log_density_fn(x):
-        x = jnp.asarray(x, dtype=jnp.float32)
-        g = compute_g(Xmat, B, x)
-        return -1*density_v_of_g(g, C[:, 0], delta)
+    if hmc_params is None or 'rng_key' not in hmc_params:
+        raise ValueError("hmc_params must be provided with a 'rng_key'")
 
-    if hmc_params is None:
-        raise ValueError("hmc_params must be provided for HMC sampling")
-
-    #Add options for other params at later stage if user wants to use them
     rng_key = hmc_params['rng_key']
+    Z_accumulator = []
+    n_pairs = 0
 
-    #TODO: Need to rewrite this
-    def inference_loop(rng_key, kernel, initial_state, num_samples):
-        @jax.jit
-        def one_step(state, rng_key):
-            state, _ = kernel(rng_key, state)
-            return state, state
-
-        keys = jax.random.split(rng_key, num_samples)
-        _, states = jax.lax.scan(one_step, initial_state, keys)
-
-        return states
-
-
-    for i in hull.vertices:
-        for j in hull.vertices:
+    for i in hull_vertices:
+        for j in hull_vertices:
             if i == j:
                 continue
+
+            # Skip degenerate pairs
             if np.linalg.norm(A[i] - A[j]) < 1e-14:
                 continue
-            else:
-                for t in range(n_samples):
-                    #burn in for inverse mass matrix
-                    initial_position = sample_x_ij(B[0], B[1], B.shape[1])
-                    #burn in to calculate inverse mass matrix and step size
-                    warmup = blackjax.window_adaptation(blackjax.nuts, log_density_fn)
-                    rng_key, warmup_key, sample_key = jax.random.split(rng_key, 3)
-                    (state, parameters), _ = warmup.run(warmup_key, initial_position, num_steps=1000)
 
-                    #kernel includes inverse mass matrix and step size
-                    kernel = blackjax.nuts(log_density_fn, **parameters).step
+            n_pairs += 1
 
-                    #TODO: need to implement actual monte carlo logic here - the rest doesnt matter
-                    states = inference_loop(sample_key, kernel, state, 1_000)
-                    inverse_mass = parameters['inverse_mass_matrix']
-                    step_size = parameters['step_size']
+            # 3.a) Initial position for HMC (projected somewhere on line between B[i], B[j])
+            initial_position = sample_x_ij(B[i], B[j], dim)
 
-                    #HMC sampling
-                    nuts = blackjax.nuts(log_density_fn, step_size, inverse_mass)
-                    initial_state = nuts.init(initial_position)
-                    #Figuring out a way to calculate this - so number of integration steps is calculated at runtime
-                    n_steps = 10#nuts.num_integration_steps
+            # 3.b) Define log_density_fn = -density_v_of_g(…)
+            def log_density_fn(x):
+                x = jnp.asarray(x, dtype=jnp.float32)
+                g = compute_g(Xmat, B, x)
+                return -1.0 * density_v_of_g(g, c0, delta)
 
-                    sample_hmc = blackjax.hmc(log_density_fn, step_size, inverse_mass, n_steps)
-                    state = states[-1]
-                    hmc_step = jax.jit(sample_hmc.step)
+            # 3.c) Warmup to get dual-averaged step_size & inverse_mass_matrix
+            warmup = blackjax.window_adaptation(blackjax.nuts, log_density_fn)
+            rng_key, warmup_key, sample_key = jax.random.split(rng_key, 3)
+            (state, parameters), _ = warmup.run(warmup_key,
+                                                initial_position,
+                                                num_steps=500)
 
-                    def one_hmc(state, k):
-                        state, _ = hmc_step(k, state)
-                        return state, np.array(state.position)
+            #NOTE: Num Integration Steps is calculated at runtime
+            inverse_mass = parameters['inverse_mass_matrix']
+            step_size = parameters['step_size']
 
-                    keys = jax.random.split(rng_key, n_samples)
-                    _, chain = jax.lax.scan(one_hmc, state, keys)
+            # 3.d) Build a NUTS kernel with those parameters
+            nuts = blackjax.nuts(log_density_fn, step_size, inverse_mass)
+            hmc_step = jax.jit(nuts.step)
 
-                    # Kac-Rice estimate over HMC chain
-                    c0 = C[:, 0]
-                    Z = 0.0
+            def one_hmc(state, rng_subkey):
+                state, _ = hmc_step(rng_subkey, state)
+                return state, state.position
 
-                    for x in chain:
-                        local = 0.0
-                        for _ in range(M):
-                            g_val = compute_g(Xmat, A, x)
-                            J = compute_jacobian(Xmat, A, x)
-                            local += abs(np.linalg.det(J)) * density_v_of_g(g_val, c0, delta)
-                        Z += local / M
+            rng_key, chain_key = jax.random.split(rng_key)
+            hmc_keys = jax.random.split(chain_key, n_samples)
+            _, chain = jax.lax.scan(one_hmc, state, hmc_keys)
+            chain = np.array(chain)
+            #chain is a array of shape (n_samples, dim)
 
-                    return Z
 
+            # 5) Inner Monte Carlo over each x in the HMC chain:
+            Z_ij = 0.0
+            for x in chain:
+                local_sum = 0.0
+                for _ in range(M):
+                    g_val = compute_g(Xmat, A, x)
+                    J = compute_jacobian(Xmat, A, x)
+                    detJ = abs(np.linalg.det(J))
+                    density_val = density_v_of_g(g_val, c0, delta)
+                    local_sum += detJ * density_val
+                Z_ij += (local_sum / M)
+
+            # Average over all n_samples in this chain
+            Z_ij /= n_samples
+            Z_accumulator.append(Z_ij)
+
+    if n_pairs == 0:
+        return 0.0
+    return float(np.mean(Z_accumulator))
 
 if __name__ == "__main__":
     d = 3
