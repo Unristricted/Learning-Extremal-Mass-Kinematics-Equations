@@ -1,8 +1,6 @@
 import numpy as np
-from monte_carlo import monte_carlo_kac_rice
 from hmc_montecarlo import hmc_monte_carlo_kac_rice
 from preprocess import preprocess_support_set
-from montecarlo.lib.python3.13.site-packages.pip._vendor.msgpack import ExtType
 
 
 class MonteCarloExperiment:
@@ -13,20 +11,12 @@ class MonteCarloExperiment:
         self.n_samples = n_samples
         self.M = M
 
-    def run_vanilla_mc(self, num_experiments):
+
+    def run_hmc_mc(self, num_experiments, seed=123):
         self.estimates = np.arange(num_experiments)
+        hmc_params = {'rng_key': seed}
         for _ in range(num_experiments):
-            est = monte_carlo_kac_rice(self.A, self.A_C, self.delta, n_samples=self.n_samples, M=self.M)
-            self.estimates[i] = est
-
-        print(f'My {num_experiments} experiment(s) gave me:{self.estimates}')
-        return self.estimates
-
-
-    def run_hmc_mc(self, num_experiments):
-        self.estimates = np.arange(num_experiments)
-        for _ in range(num_experiments):
-            est = hmc_monte_carlo_kac_rice(self.A, self.A_C, self.delta, n_samples=self.n_samples, M=self.M)
+            est = hmc_monte_carlo_kac_rice(self.A, self.A_C, self.delta, n_samples=self.n_samples, M=self.M, hmc_params=hmc_params)
             self.estimates[i] = est
 
         print(f'My {num_experiments} experiment(s) gave me:{self.estimates}')
