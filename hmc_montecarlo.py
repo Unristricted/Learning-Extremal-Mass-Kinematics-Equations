@@ -143,55 +143,6 @@ def density_v_of_g(g_val, C0, delta):
     density = jnp.exp(log_density)
     return density
 
-
-def monte_carlo_kac_rice(A, C0, delta, n_samples=100, M=100, seed=None):
-    B = preprocess_support_set(A)
-    hull = ConvexHull(B)
-    hull_points = B[hull.vertices]
-    affine_basis = hull_points - hull_points[0]
-    dim = np.linalg.matrix_rank(affine_basis)
-    c0 = C[:, 0]
-    Z_0 = 0.000
-
-    # Store the 5 smallest polynomial evaluations for debugging
-    min_poly_values = []
-    for i in hull.vertices:
-        for j in hull.vertices:
-            if i == j:
-                continue
-            if np.linalg.norm(A[i] - A[j]) < 1e-14:
-                continue
-            else:
-                for t in range(n_samples):
-                    x = sample_x_ij(B[i], B[j], dim)
-                    Z_0 = 0.000
-                    local_sum = 0.0
-                    for m in range(M):
-                            Xmat = sample_random_matrix(C, delta)
-                            g_val = compute_g(Xmat, B, x)
-                            J = compute_jacobian(Xmat, B, x)
-                            detJ = abs(np.linalg.det(J))
-                            density_val = density_v_of_g(g_val, c0, delta)
-                            local_sum =  (m/(m+1))* local_sum +  (1/(m+1)) * detJ * density_val
-                    Z_0 = (t/(t+1))*Z_0 + (1/(t+1))* local_sum
-
-                # Diagnostics: track polynomial values
-                y = compute_polynomial(B, C, x)
-                poly_val = evaluations(y, J, density_val, g_val)
-                if len(min_poly_values) < 5:
-                    min_poly_values.append(poly_val)
-                else:
-                    current_max = max(min_poly_values)
-                    if poly_val < current_max:
-                        max_idx = min_poly_values.index(current_max)
-                        min_poly_values[max_idx] = poly_val
-
-                print("5 least values of compute_polynomial:")
-                for ev in sorted(min_poly_values):
-                    print(ev)
-
-    return Z_0
-
 def preprocess_routine(A):
     B = preprocess_support_set(A)
     hull = ConvexHull(B)
@@ -200,7 +151,6 @@ def preprocess_routine(A):
     dim = np.linalg.matrix_rank(affine_basis)
 
     return B, hull, dim
-
 
 def hmc_monte_carlo_kac_rice(A, C, delta,
                              n_samples=100,
@@ -280,7 +230,7 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
 
 
             # 5) Inner Monte Carlo over each x in the HMC chain:
-            Z_ij = 0.0
+            best_Z = -np.inf                    
             for x in chain:
                 local_sum = 0.0
                 for _ in range(M):
@@ -289,10 +239,11 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
                     detJ = abs(np.linalg.det(J))
                     density_val = density_v_of_g(g_val, c0, delta)
                     local_sum += detJ * density_val
-                Z_ij += (local_sum / M)
+                Z_x = local_sum / M              
+                if Z_x > best_Z:                 
+                    best_Z = Z_x
 
-            # Average over all n_samples in this chain
-            Z_ij /= n_samples
+            Z_ij = best_Z                        
             Z_accumulator.append(Z_ij)
 
     if n_pairs == 0:
