@@ -6,6 +6,7 @@ from scipy.spatial import ConvexHull
 import jax
 import jax.numpy as jnp
 import blackjax
+import matplotlib.pyplot as plt
 
 class evaluations():
     def __init__(self, y_val, jacobian, density, g_val):
@@ -94,6 +95,9 @@ def compute_polynomial(A, C, x):
 
 
 def compute_jacobian(Xmat, A, x):
+    print('X matrix', Xmat)
+    print('A matrix', A)
+    print('x vector', x)
     n = Xmat.shape[0]
     t_plus_1 = Xmat.shape[1]
     dim = A.shape[1]
@@ -101,11 +105,13 @@ def compute_jacobian(Xmat, A, x):
     for i in range(n):
         for j in range(1, t_plus_1):
             exponent = float(np.dot(A[j], x))
+            print('exponent', exponent)
             if exponent**2 > 1:
                 exp_val = expm1(exponent) + 1.0
             else:
                 t = exponent
                 exp_val = 1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320
+            print('exp_val', exp_val)
             J[i, :] += -Xmat[i, j] * exp_val * A[j]
     return J
 
@@ -216,22 +222,30 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
 
             # 3.d) Build a NUTS kernel with those parameters
             nuts = blackjax.nuts(log_density_fn, step_size, inverse_mass)
-            hmc_step = jax.jit(nuts.step)
+            initial_state = nuts.init(initial_position)
+            print(initial_state)
 
-            def one_hmc(state, rng_subkey):
-                state, _ = hmc_step(rng_subkey, state)
-                return state, state.position
 
-            rng_key, chain_key = jax.random.split(rng_key)
-            hmc_keys = jax.random.split(chain_key, n_samples)
-            _, chain = jax.lax.scan(one_hmc, state, hmc_keys)
-            chain = np.array(chain)
-            #chain is a array of shape (n_samples, dim)
+            def inference_loop(rng_key, kernel, initial_state, num_samples):
+                @jax.jit
+                def one_step(state, rng_key):
+                    state, _ = kernel(rng_key, state)
+                    return state, state
+                keys = jax.random.split(rng_key, num_samples)
+                _, states = jax.lax.scan(one_step, initial_state, keys)
 
+                return states
+
+            samples = inference_loop(rng_key, nuts.step, initial_state, n_samples)
+            hmc_samples = samples.position
+            print(hmc_samples)
+
+            plt.plot(hmc_samples, 'o')
+            plt.show()
 
             # 5) Inner Monte Carlo over each x in the HMC chain:
-            best_Z = -np.inf                    
-            for x in chain:
+            Z_ij = 0.0
+            for x in hmc_samples:
                 local_sum = 0.0
                 for _ in range(M):
                     g_val = compute_g(Xmat, A, x)
@@ -239,11 +253,9 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
                     detJ = abs(np.linalg.det(J))
                     density_val = density_v_of_g(g_val, c0, delta)
                     local_sum += detJ * density_val
-                Z_x = local_sum / M              
-                if Z_x > best_Z:                 
-                    best_Z = Z_x
+                Z_ij += (local_sum / M)
 
-            Z_ij = best_Z                        
+            Z_ij /= n_samples
             Z_accumulator.append(Z_ij)
 
     if n_pairs == 0:
