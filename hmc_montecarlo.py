@@ -64,13 +64,13 @@ def project_onto_plane(vec, normal):
     return vec - (np.dot(vec, normal) / denom) * normal
 
 
-def sample_x_ij(a_i, a_j, n):
+def sample_x_ij(a_i, a_j, n, t_const):
     normal = a_i - a_j
     norm_sq = np.dot(normal, normal)
     if norm_sq < 1e-14:
         print("norm_sq is 0 – assigning random value")
         return np.random.randn(n)
-    L = 2.0 * (np.log(t + 1e-9) + np.log(n + 1e-9))
+    L = 2.0 * (np.log(t_const + 1e-9) + np.log(n + 1e-9))
     limit_alpha = L / norm_sq
     alpha = np.random.uniform(-limit_alpha, limit_alpha)
     Y = np.random.randn(n)
@@ -95,9 +95,6 @@ def compute_polynomial(A, C, x):
 
 
 def compute_jacobian(Xmat, A, x):
-    print('X matrix', Xmat)
-    print('A matrix', A)
-    print('x vector', x)
     n = Xmat.shape[0]
     t_plus_1 = Xmat.shape[1]
     dim = A.shape[1]
@@ -105,13 +102,13 @@ def compute_jacobian(Xmat, A, x):
     for i in range(n):
         for j in range(1, t_plus_1):
             exponent = float(np.dot(A[j], x))
-            print('exponent', exponent)
+            #print('exponent', exponent)
             if exponent**2 > 1:
                 exp_val = expm1(exponent) + 1.0
             else:
                 t = exponent
                 exp_val = 1- t + t**2/2-t**3/6+t**4/24-t**5/120+t**6/720-t**7/5040+t**8/40320
-            print('exp_val', exp_val)
+            #print('exp_val', exp_val)
             J[i, :] += -Xmat[i, j] * exp_val * A[j]
     return J
 
@@ -201,7 +198,8 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
             n_pairs += 1
 
             # 3.a) Initial position for HMC (projected somewhere on line between B[i], B[j])
-            initial_position = sample_x_ij(B[i], B[j], dim)
+            t_const = B.shape[0] - 1
+            initial_position = sample_x_ij(B[i], B[j], dim, t_const)
 
             # 3.b) Define log_density_fn = -density_v_of_g(…)
             def log_density_fn(x):
@@ -239,9 +237,6 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
             samples = inference_loop(rng_key, nuts.step, initial_state, n_samples)
             hmc_samples = samples.position
             print(hmc_samples)
-
-            plt.plot(hmc_samples, 'o')
-            plt.show()
 
             # 5) Inner Monte Carlo over each x in the HMC chain:
             Z_ij = 0.0
