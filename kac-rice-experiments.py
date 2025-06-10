@@ -1,6 +1,7 @@
 import numpy as np
 from hmc_montecarlo import hmc_monte_carlo_kac_rice
 from preprocess import preprocess_support_set
+import jax
 
 
 class MonteCarloExperiment:
@@ -14,7 +15,7 @@ class MonteCarloExperiment:
 
     def run_hmc_mc(self, num_experiments, seed=123):
         self.estimates = np.arange(num_experiments)
-        hmc_params = {'rng_key': seed}
+        hmc_params = {'rng_key': jax.random.PRNGKey(123)}
         for _ in range(num_experiments):
             est = hmc_monte_carlo_kac_rice(self.A, self.A_C, self.delta, n_samples=self.n_samples, M=self.M, hmc_params=hmc_params)
             self.estimates[i] = est
