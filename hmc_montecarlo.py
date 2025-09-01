@@ -102,6 +102,13 @@ def compute_jacobian(Xmat, A, x):
     for i in range(n):
         for j in range(1, t_plus_1):
             exponent = float(np.dot(A[j], x))
+            if exponent < -10e5:
+                return None
+            elif exponent > -10e4 and exponent < -10e3:
+                exponent = -10e3
+
+            elif exponent > -10e3 and exponent < -10e2:
+                exponent = -10e2
             #print('exponent', exponent)
             if exponent**2 > 1:
                 exp_val = expm1(exponent) + 1.0
@@ -172,7 +179,11 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
     """
 
     # 1) Draw a single random Xmat (shared across all (i,j))
+    # Need to sample one matrix for initial point
     Xmat = sample_random_matrix(C, delta)
+    sampled_matrices = []
+    for i in range(M):
+        sampled_matrices.append(sample_random_matrix(C, delta))
 
     # 2) Precompute convex-hull support set and dimension
     B, hull, dim = preprocess_routine(A)
@@ -236,15 +247,17 @@ def hmc_monte_carlo_kac_rice(A, C, delta,
 
             samples = inference_loop(rng_key, nuts.step, initial_state, n_samples)
             hmc_samples = samples.position
-            print(hmc_samples)
+            #print(hmc_samples)
 
             # 5) Inner Monte Carlo over each x in the HMC chain:
             Z_ij = 0.0
             for x in hmc_samples:
                 local_sum = 0.0
-                for _ in range(M):
-                    g_val = compute_g(Xmat, A, x)
-                    J = compute_jacobian(Xmat, A, x)
+                for sampled_matrix in sampled_matrices:
+                    g_val = compute_g(sampled_matrix, A, x)
+                    J = compute_jacobian(sampled_matrix, A, x)
+                    if J is None:
+                        continue
                     detJ = abs(np.linalg.det(J))
                     density_val = density_v_of_g(g_val, c0, delta)
                     local_sum += detJ * density_val
